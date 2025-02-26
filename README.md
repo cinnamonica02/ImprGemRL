@@ -1,6 +1,20 @@
 ### Setup 
 
-> Were gonna go for vast for now but considering other affordable GPU Cloud instances like glow
+> Were gonna go for vast for now but considering other affordable GPU Cloud instances like glow, so far when running on this vas.ai instance, while i didnt have issues connecting to the repo, whenever I had to make modifications to the code I couldnt push the code to the repo :( so the work around I came up with was the following:
+
+To clarify, you should run the following commands on your Vast.ai VS Code instance:
+
+Set the pull strategy to rebase:
+```
+bash
+git config pull.rebase true
+Pull changes from the remote repository:
+```
+```
+bash
+git pull origin main
+```
+This will fetch the latest changes from your GitHub repository and rebase your local branch on top of the updated remote branch, ensuring a linear commit history. This way I added , commited and pushed origin main files from my local vs code environment into the repo, and pulled it from the vast.ai (mouth full lol but I had to make use of my already put in credit, maybe its me maybe its them but we do what we can here!)
 
 
 1. Install dependencies
@@ -49,6 +63,7 @@ python3 download_gsm8k.py --split train --num_examples 7473
 
 
 ```
+
 
 
 ## Answer Checkers
