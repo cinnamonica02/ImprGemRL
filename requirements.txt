@@ -1,0 +1,8 @@
+datasets>=2.15.0
+requests>=2.31.0
+litellm>=1.30.7
+python-dotenv>=1.0.0
+aiohttp>=3.9.0
+tqdm>=4.66.0
+hf_transfer
+psutil>=6.0.0
