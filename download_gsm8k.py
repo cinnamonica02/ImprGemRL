@@ -10,35 +10,26 @@ def main():
                         help='Number of examples to download. Use -1 for all examples')
     args = parser.parse_args()
 
-    # loading in dataset
+    # Load the dataset
     dataset = load_dataset("openai/gsm8k", "main")
 
-    # get all examples if num_examples is -1, otherwise get specified number of examples
+    # Get examples
     if args.num_examples == -1:
         data = dataset[args.split]
     else:
+        # FIXED LINE: Removed the extra `range()`
         data = dataset[args.split].select(range(min(args.num_examples, len(dataset[args.split]))))
 
-    # Convert to a list of dict 
-    examples = []
-    for item in data:
-        examples.append({
-            'question': item['question'],
-            'answer': item['answer'],
-        })
+    # Convert to list of dicts
+    examples = [{"question": item["question"], "answer": item["answer"]} for item in data]
 
-    # create filename with split and number of examples
+    # Save to JSON
     output_file = f'gsm8k_{args.split}_{args.num_examples}.json'
-
-    # save to json file
     with open(output_file, 'w') as f:
         json.dump(examples, f, indent=2)
 
     print(f'Downloaded {len(examples)} examples from the GSM8K {args.split} split')
     print(f'Saved to {output_file}')
-    print(f'First example: {examples[0]}')
-    print('Question:', examples[0]['question'])
-    print('Answer:', examples[0]['answer'])
 
 if __name__ == '__main__':
     main()
