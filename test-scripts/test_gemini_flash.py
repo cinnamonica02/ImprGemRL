@@ -61,6 +61,7 @@ class TestGeminiFlash(TestCase):
 
 def main():
     tester = TestGeminiFlash()
+    tester.setUp()
     asyncio.run(tester.run_tests())
 
 if __name__ == "__main__":
