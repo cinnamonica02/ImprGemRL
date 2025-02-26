@@ -36,6 +36,10 @@ python3 download_gsm8k.py --split test --num_examples 100
 
 python3 download_gsm8k.py --split test --num_examples 16
 
+python3 download_gsm8k.py --split test --num_examples 1319
+
+python3 download_gsm8k.py --split train --num_examples 100
+
 python3 download_gsm8k.py --split train --num_examples 7473
 
 #python3 download_gsm8k.py --split train --num_examples -1
