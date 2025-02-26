@@ -68,10 +68,11 @@ class AnswerChecker:
             return float(numbers[-1]) if numbers else None
         except (ValueError, IndexError, TypeError):
             return None
+        
 
     def _parse_gemini_response(self, response: str) -> Dict:
-        verdict_match = re.search(r'VEREDICT:\s*(CORRECT|INCORRECT)', response)
-        explanation_match = re.search(r'ASSESMENT:(.*?)VEREDICT:', response, re.DOTALL)
+        verdict_match = re.search(r'VERDICT:\s*(CORRECT|INCORRECT)', response)
+        explanation_match = re.search(r'ASSESSMENT:(.*?)VERDICT::', response, re.DOTALL)
         
         return {
             "is_correct": verdict_match.group(1) == "CORRECT" if verdict_match else False,
