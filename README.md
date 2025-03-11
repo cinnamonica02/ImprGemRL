@@ -128,6 +128,7 @@ python3 run_inference.py --datasetgsm8k --gsm8k-file gsm8k_test_100.json
 
 # Run sampling inference
 
+python3 sampling_batch_inference.py --dataset gsm8k --model "unsloth/Llama-3.2-1B-Instruct" --num-samples 8 --gsm8k-file gsm8k_test_100.json
 
 python3 sampling_batch_inference.py --dataset gsm8k --model "unsloth/Llama-3.2-1B-Instruct" --num-samples 8 --gsm8k-file gsm8k_test_1319.json
 
@@ -135,4 +136,9 @@ python3 sampling_batch_inference.py --dataset gsm8k --model "unsloth/Llama-3.2-1
 
 ```
 
+### After wel save out Baseline performance that wel later improve upon and compare to - 
 
+```bash
+# Eg -  Pass@8 (atleast 1 correct): 78*100 (78.8%)
+
+```

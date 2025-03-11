@@ -7,6 +7,9 @@ load_dotenv()
 def get_gemini_api_key():
     return os.getenv('GEMINI_API_KEY')
 
+def get_huggingface_api_key():
+    return os.getenv('HUGGINGFACE_API_KEY')
+
 def get_deepseek_api_key():
     return os.getenv('DEEPSEEK_API_KEY')
 

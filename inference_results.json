@@ -1,0 +1,107 @@
+{
+  "results": [
+    {
+      "example_index": 0,
+      "result": {
+        "is_correct": false,
+        "explanation": "The ground truth final numerical answer is 18.  The model did not provide a final numerical answer.",
+        "extracted_answer": null,
+        "extracted_ground_truth": 18.0,
+        "check_method": "gemini"
+      }
+    },
+    {
+      "example_index": 1,
+      "result": {
+        "is_correct": false,
+        "explanation": "The model did not provide a final numerical answer.  The ground truth final numerical answer is 3.",
+        "extracted_answer": null,
+        "extracted_ground_truth": 3.0,
+        "check_method": "gemini"
+      }
+    },
+    {
+      "example_index": 2,
+      "result": {
+        "is_correct": false,
+        "explanation": "No explanation found",
+        "extracted_answer": null,
+        "extracted_ground_truth": 70000.0,
+        "check_method": "gemini"
+      }
+    },
+    {
+      "example_index": 3,
+      "result": {
+        "is_correct": false,
+        "explanation": "The model did not provide a final numerical answer.  The ground truth final numerical answer is 540.",
+        "extracted_answer": null,
+        "extracted_ground_truth": 540.0,
+        "check_method": "gemini"
+      }
+    },
+    {
+      "example_index": 4,
+      "result": {
+        "is_correct": false,
+        "explanation": "The ground truth final numerical answer is 20.  The model does not provide a final numerical answer.",
+        "extracted_answer": null,
+        "extracted_ground_truth": 20.0,
+        "check_method": "gemini"
+      }
+    },
+    {
+      "example_index": 5,
+      "result": {
+        "is_correct": false,
+        "explanation": "The ground truth final numerical answer is 64.  The model did not provide a final numerical answer.",
+        "extracted_answer": null,
+        "extracted_ground_truth": 64.0,
+        "check_method": "gemini"
+      }
+    },
+    {
+      "example_index": 6,
+      "result": {
+        "is_correct": false,
+        "explanation": "The ground truth final numerical answer is 260.  The model did not provide a final numerical answer.",
+        "extracted_answer": null,
+        "extracted_ground_truth": 260.0,
+        "check_method": "gemini"
+      }
+    },
+    {
+      "example_index": 7,
+      "result": {
+        "is_correct": false,
+        "explanation": "The ground truth final numerical answer is 160.  The model did not provide a final numerical answer.",
+        "extracted_answer": null,
+        "extracted_ground_truth": 160.0,
+        "check_method": "gemini"
+      }
+    }
+  ],
+  "stats": {
+    "total_calls": 8,
+    "successful_calls": 8,
+    "retry_calls": 0,
+    "failed_calls": 0,
+    "rate_limit_retries": 0,
+    "other_retries": 0,
+    "retry_counts": {
+      "1": 0,
+      "2": 0,
+      "3": 0
+    },
+    "exact_match_failures_but_correct": 0,
+    "interesting_cases": [],
+    "success_rate": 100.0,
+    "exact_match_disagreement_rate": 0.0
+  },
+  "config": {
+    "model_name": "gemini/gemini-1.5-flash",
+    "dataset": "gsm8k",
+    "dataset_subset": "main",
+    "num_samples": 8
+  }
+}

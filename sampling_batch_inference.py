@@ -2,16 +2,71 @@
 
 import asyncio
 import logging
+import argparse
+import json
+import os
+import sys
 from datasets import load_dataset
-from utils.answer_checker import AnswerChecker  # Make sure your utils package is in PYTHONPATH
+from pathlib import Path
+
+# Import the configuration
+from config import InferenceConfig
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Install missing packages if needed
+missing_packages = []
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Load environment variables from .env file
+except ImportError:
+    missing_packages.append("python-dotenv")
+
+try:
+    import litellm
+except ImportError:
+    missing_packages.append("litellm")
+
+if missing_packages:
+    logger.info(f"Installing missing packages: {', '.join(missing_packages)}")
+    import subprocess
+    for package in missing_packages:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+    
+    # Now try importing again
+    if "python-dotenv" in missing_packages:
+        from dotenv import load_dotenv
+        load_dotenv()
+    if "litellm" in missing_packages:
+        import litellm
+
+# Now import AnswerChecker
+from utils.answer_checker import AnswerChecker
+
+def check_api_keys():
+    """Check which API keys are available"""
+    available_models = []
+    
+    if os.getenv("GEMINI_API_KEY"):
+        available_models.append("gemini/gemini-1.5-flash")
+    
+    if os.getenv("OPENAI_API_KEY"):
+        available_models.append("openai/gpt-3.5-turbo")
+    
+    if os.getenv("ANTHROPIC_API_KEY"):
+        available_models.append("anthropic/claude-instant-1")
+    
+    if os.getenv("HUGGINGFACE_API_KEY"):
+        available_models.append("huggingface/microsoft/phi-2")  # A smaller model that should work with HF API
+    
+    return available_models
+
 async def process_example(example, answer_checker: AnswerChecker):
     """
-    Process a single GSM8K example:
+    Process a single example:
     - Extracts the question and ground truth answer.
     - Simulates a model answer by wrapping the ground truth in <think> tags.
     - Uses the AnswerChecker to evaluate the answer.
@@ -27,34 +82,133 @@ async def process_example(example, answer_checker: AnswerChecker):
         question=question,
         model_answer=model_answer,
         ground_truth=ground_truth,
-        max_retries=3  # You can adjust the retry count as needed.
+        max_retries=3
     )
     return result
 
+def load_gsm8k_dataset(subset='main', split='test', file_path=None):
+    """
+    Load GSM8K dataset with proper error handling
+    """
+    try:
+        if file_path and os.path.exists(file_path):
+            logger.info(f"Loading GSM8K dataset from file: {file_path}")
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+            # Convert to dataset-like format
+            return [{"question": item.get("question", ""), 
+                    "answer": item.get("answer", "")} 
+                   for item in data]
+        else:
+            # Ensure the subset is explicitly provided
+            logger.info(f"Loading GSM8K dataset from HuggingFace - subset: '{subset}', split: '{split}'")
+            try:
+                # Try to load with explicit subset and split parameters
+                dataset = load_dataset("openai/gsm8k", name=subset, split=split)
+                logger.info(f"Successfully loaded GSM8K dataset with {len(dataset)} examples")
+                return dataset
+            except Exception as e:
+                logger.warning(f"Error with name parameter: {e}")
+                # Try alternate parameter format
+                dataset = load_dataset("openai/gsm8k", subset, split=split)
+                logger.info(f"Successfully loaded GSM8K dataset with {len(dataset)} examples")
+                return dataset
+    except Exception as e:
+        logger.error(f"Failed to load dataset: {e}")
+        raise
+
 async def main():
-    # Load the GSM8K dataset (test split) from Hugging Face.
-    logger.info("Loading GSM8K dataset...")
-    dataset = load_dataset("openai/gsm8k", split="test")
-    logger.info(f"Loaded GSM8K test split with {len(dataset)} examples.")
+    # Load default configuration
+    config = InferenceConfig()
+    
+    # Check which API keys are available
+    available_models = check_api_keys()
+    if not available_models:
+        logger.error("No API keys found. Please set at least one API key in your environment.")
+        logger.info("You can set one of the following environment variables:")
+        logger.info("GEMINI_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, HUGGINGFACE_API_KEY")
+        return
+    
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Run batch inference on datasets")
+    parser.add_argument("--dataset", type=str, default="gsm8k", help="Dataset to use (default: gsm8k)")
+    parser.add_argument("--model", type=str, help=f"Model name to use. Available models: {', '.join(available_models)}")
+    parser.add_argument("--num-samples", type=int, default=config.sample_size or 5, help="Number of samples to process")
+    parser.add_argument("--gsm8k-file", type=str, help="Path to GSM8K dataset file (optional)")
+    parser.add_argument("--dataset-subset", type=str, default=config.dataset_subset, help=f"Dataset subset (default: {config.dataset_subset})")
+    parser.add_argument("--dataset-split", type=str, default=config.dataset_split, help=f"Dataset split (default: {config.dataset_split})")
+    parser.add_argument("--list-models", action="store_true", help="List available models and exit")
+    
+    args = parser.parse_args()
+    
+    # List available models if requested
+    if args.list_models:
+        logger.info("Available models:")
+        for model in available_models:
+            logger.info(f"  - {model}")
+        return
+    
+    # Use the first available model if none specified
+    model_name = args.model or available_models[0]
+    logger.info(f"Using model: {model_name}")
+    
+    # Load the dataset based on the arguments
+    logger.info(f"Loading {args.dataset} dataset...")
+    
+    try:
+        if args.dataset.lower() == "gsm8k":
+            dataset = load_gsm8k_dataset(
+                subset=args.dataset_subset,
+                split=args.dataset_split,
+                file_path=args.gsm8k_file if args.gsm8k_file else None
+            )
+        else:
+            raise ValueError(f"Unsupported dataset: {args.dataset}")
+    except Exception as e:
+        logger.error(f"Error loading dataset: {str(e)}")
+        return
+    
+    if not dataset:
+        logger.error("Failed to load dataset. Exiting.")
+        return
 
-    # Initialize the AnswerChecker.
-    # Ensure that your environment variable GEMINI_API_KEY is set (or load from sample.env).
-    answer_checker = AnswerChecker(model_name='gemini/gemini-1.5-flash')
+    # Initialize the AnswerChecker with the specified model
+    logger.info(f"Initializing AnswerChecker with model: {model_name}")
+    answer_checker = AnswerChecker(model_name=model_name)
 
-    # For demonstration, we'll process a small subset (e.g., first 5 examples).
-    subset = dataset.select(range(5))
+    # Process the specified number of samples
+    num_samples = min(args.num_samples, len(dataset))
+    subset = dataset[:num_samples] if isinstance(dataset, list) else dataset.select(range(num_samples))
+    
+    logger.info(f"Processing {num_samples} examples...")
     tasks = [process_example(example, answer_checker) for example in subset]
 
-    # Run the tasks concurrently.
+    # Run the tasks concurrently
     results = await asyncio.gather(*tasks)
 
-    # Log results for each example.
+    # Log results for each example
     for idx, res in enumerate(results):
         logger.info(f"Result for example {idx}:\n{res}\n")
 
-    # Optionally, log aggregated statistics from AnswerChecker.
+    # Log aggregated statistics
     stats = answer_checker.get_stats()
     logger.info(f"Aggregated Stats: {stats}")
+    
+    # Save results to file
+    results_file = config.results_file
+    with open(results_file, 'w') as f:
+        json.dump({
+            "results": [{"example_index": idx, "result": res} for idx, res in enumerate(results)],
+            "stats": stats,
+            "config": {
+                "model_name": model_name,
+                "dataset": args.dataset,
+                "dataset_subset": args.dataset_subset,
+                "num_samples": num_samples,
+            }
+        }, f, indent=2)
+    
+    logger.info(f"Results saved to {results_file}")
 
 if __name__ == "__main__":
     asyncio.run(main())
