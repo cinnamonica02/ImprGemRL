@@ -17,6 +17,17 @@ git pull origin main
 This will fetch the latest changes from your GitHub repository and rebase your local branch on top of the updated remote branch, ensuring a linear commit history. This way I added , commited and pushed origin main files from my local vs code environment into the repo, and pulled it from the vast.ai (mouth full lol but I had to make use of my already put in credit, maybe its me maybe its them but we do what we can here!)
 
 
+> Clone the repo `https://github.com/cinnamonica02/ImprGemRL.git` 
+
+```bash
+# Creating a venv
+cd C:\path\to\your\project
+python -m venv venv
+source venv/bin/activate
+
+```
+
+
 1. Install dependencies
 
 
@@ -29,8 +40,13 @@ uv pip install -r requirements.txt --system
 
 # install SGLang components
 
-uv pip install  sgl-kernel --force-reinstall --no-deps--system
-uv-pip install "sglang[all] --find-links https://flashinfer.ai/whl/cu124/torch2.4/flashinfer/ --system
+#uv pip install  sgl-kernel --force-reinstall --no-deps--system
+uv pip install sgl-kernel --force-reinstall --no-deps --system
+
+#uv-pip install "sglang[all] --find-links https://flashinfer.ai/whl/cu124/torch2.4/flashinfer/ --system
+
+uv pip install "sglang[all]" --find-links https://flashinfer.ai/whl/cu124/torch2.4/flashinfer/ --system
+
 ```
 
 
@@ -103,5 +119,20 @@ pip install sglang torch transformers deepseek-ai
 
 python3 run_inference.py --datasetgsm8k --gsm8k-file gsm8k_test_100.json
 
+```
+
+## Simple Inference w/ sampling
+
+
+```bash
+
+# Run sampling inference
+
+
+python3 sampling_batch_inference.py --dataset gsm8k --model "unsloth/Llama-3.2-1B-Instruct" --num-samples 8 --gsm8k-file gsm8k_test_1319.json
+
+python3 sampling_batch_inference.py --dataset gsm8k --model "unsloth/Llama-3.2-1B-Instruct" --num-samples 8 --gsm8k-file gsm8k_train_7473.json --think-tags
+
+```
 
 

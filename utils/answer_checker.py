@@ -131,7 +131,7 @@ class AnswerChecker:
         extracted_answer = self._extract_final_number(cleaned_answer)
         extracted_truth = self._extract_final_number(ground_truth)
 
-        if extracted_answer and extracted_truth:
+        if extracted_answer and extracted_truth is not None:
             if abs(extracted_answer - extracted_truth) < 1e-6:
                 return {
                     "is_correct": True,
@@ -140,29 +140,79 @@ class AnswerChecker:
                     "extracted_ground_truth": extracted_truth,
                     "check_method": "exact_match"
                 }
+            
 
-        gemini_response = await self._call_gemini_with_retry(
-            f"""Compare these answers for the question: {question}
-            Model Answer: {cleaned_answer}
-            Ground Truth: {ground_truth}
-            Focus only on numerical equivalence.""",
-            max_retries
-        )
+            # If exact match fails or we couldnt extract numbers , fall back to Gemini
+            prompt = f""" You are an expert math answer checker. Focus Only on final numerical answer, ignoring any reasoning
+            step s or mistakes in the working. 
 
-        if gemini_response:
-            if gemini_response['is_correct'] and extracted_answer is not None:
+    Question: {question}
+
+    Model's Answer:
+    {cleaned_answer}
+
+    Ground Truth:
+    {ground_truth}
+
+    Extracted numerical answers for references:
+    - Model's final number: {extracted_answer}
+    - Ground truth final number: {extracted_truth}
+
+
+    Provide your assesment in the following format:
+
+    ASSESMENT: 
+    Explain wether the final numerical answers match, focusing only on the numbers.
+
+    VERDICT:
+
+    CORRECT or INCORRECT
+
+
+    """
+        # Call gemini with retry logic
+        result = await self._call_gemini_with_retry(prompt, max_retries)
+        if result:
+            # track cases where exact match failed but gemini marks as correct
+            if result["is_correct"] and extracted_answer is not None and extracted_truth is not None:
                 self.stats["exact_match_failures_but_correct"] += 1
                 if len(self.stats["interesting_cases"]) < 10:
                     self.stats["interesting_cases"].append({
                         "question": question,
                         "model_answer": model_answer,
                         "ground_truth": ground_truth,
-                        "gemini_explanation": gemini_response['explanation']
+                        "gemini_explanation": result['explanation']
                     })
-            return {**gemini_response, 
-                    "extracted_answer": extracted_answer,
-                    "extracted_ground_truth": extracted_truth,
-                    "check_method": "gemini"}
+
+            # Add extracted answers and check method to the result
+            result["extracted_answer"] = extracted_answer
+            result["extracted_ground_truth"] = extracted_truth
+            result["check_method"] = "gemini"
+            return result
+
+
+        #gemini_response = await self._call_gemini_with_retry(
+         #   f"""Compare these answers for the question: {question}
+          #  Model Answer: {cleaned_answer}
+           # Ground Truth: {ground_truth}
+            #Focus only on numerical equivalence.""",
+            #max_retries
+        #)
+
+        #if gemini_response:
+         #   if gemini_response['is_correct'] and extracted_answer is not None:
+          #      self.stats["exact_match_failures_but_correct"] += 1
+           #     if len(self.stats["interesting_cases"]) < 10:
+            #        self.stats["interesting_cases"].append({
+             #           "question": question,
+              #          "model_answer": model_answer,
+               #         "ground_truth": ground_truth,
+                #        "gemini_explanation": gemini_response['explanation']
+               #     })
+           # return {**gemini_response, 
+            #        "extracted_answer": extracted_answer,
+             #       "extracted_ground_truth": extracted_truth,
+              #      "check_method": "gemini"}
 
         return {
             "is_correct": False,
