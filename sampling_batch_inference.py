@@ -1,4 +1,3 @@
-
 import json
 import subprocess
 import time
@@ -24,9 +23,33 @@ from config import (
     RETRY_DELAY
 )
 
-def format_arc_question(question: str, output: Optional[str] = None) -> str:
-    """Format an ARC question with optional output grid."""
-    pass
+def has_single_think_tag_pair(text: str) -> bool:
+    """Check if text has exactly one pair of think tags."""
+    open_tags = len(re.findall(r'<think>', text))
+    close_tags = len(re.findall(r'</think>', text))
+    return open_tags == 1 and close_tags == 1
+
+def extract_partial_response(text: str, suppress_logs: bool = False) -> str:
+    """Extract the partial response from the text."""
+    if not has_single_think_tag_pair(text):
+        return text
+
+    # Extract content between <think> tags
+    match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)
+    if not match:
+        return text
+
+    partial = match.group(0)  # Get the entire <think>...</think> part
+    result = partial + " Hold on a second, that's wrong. Let me think through this again."
+
+    # Debug logging if not suppressed
+    if not suppress_logs:
+        print("\nProcessing incorrect answer with wait")
+        print("Original:", text)
+        print("Modified:", result)
+        print("-" * 50)
+
+    return result
 
 def calculate_metrics(samples: List[Dict]) -> Dict:
     """Calculate metrics for a set of samples"""
@@ -53,30 +76,6 @@ def calculate_metrics(samples: List[Dict]) -> Dict:
 
     return metrics
 
-# Fix the extract_partial_response function
-def extract_partial_response(text: str, suppress_logs: bool = False) -> str:
-    """Extract the partial response from the text."""
-    if not has_single_think_tag_pair(text):
-        return text
-
-    # Extract content between <think> tags
-    match = re.search(r'<think>(.*?)</think>', text, re.DOTALL)
-    if not match:
-        return text
-
-    partial = match.group(0)  # Get the entire <think>...</think> part
-    result = partial + " Hold on a second, that's wrong. Let me think through this again."
-
-    # Debug logging if not suppressed
-    if not suppress_logs:
-        print("\nProcessing incorrect answer with wait")
-        print("Original:", text)
-        print("Modified:", result)
-        print("-" * 50)
-
-    return result
-
-# Complete the missing get_model_answer function
 async def get_model_answer(session: aiohttp.ClientSession, question: str, model_name: str,
                           sglang_semaphore: asyncio.Semaphore, num_samples: int,
                           is_arc: bool = False, wait_enabled: bool = False,
@@ -126,7 +125,6 @@ async def get_model_answer(session: aiohttp.ClientSession, question: str, model_
         print(f"Error getting model answer: {str(e)}")
         return [""] * (num_samples if not partial_response else 1)
 
-# Add a check_arc_answer function which was referenced but missing
 def check_arc_answer(question: Dict, model_answer: str, ground_truth: str, no_think_tags: bool = False) -> Dict:
     """Check if an ARC answer is correct."""
     # Basic implementation - this would need to be expanded for proper ARC evaluation
@@ -156,7 +154,66 @@ def check_arc_answer(question: Dict, model_answer: str, ground_truth: str, no_th
 
     return result
 
-# Fix and complete the process_questions function
+def format_arc_question(question: str, output: Optional[str] = None) -> str:
+    """Format an ARC question with optional output grid."""
+    formatted_question = f"Question: {question}\n\n"
+
+    if output:
+        formatted_question += f"Please solve this question and provide the output as a grid format similar to:\n{output}"
+    else:
+        formatted_question += "Please solve this question and provide your answer as a grid."
+
+    return formatted_question
+
+def load_arc_dataset(file_path: str, subset_ids: Optional[List[str]] = None) -> Tuple[List[Dict], int]:
+    """Load ARC dataset from file with optional subset filtering."""
+    try:
+        with open(file_path, 'r') as f:
+            dataset = json.load(f)
+
+        # Filter by subset_ids if provided
+        if subset_ids:
+            dataset = [item for item in dataset if str(item.get("task_id", "")) in subset_ids]
+
+        return dataset, len(dataset)
+    except Exception as e:
+        print(f"Error loading ARC dataset: {e}")
+        return [], 0
+
+def start_server(model_name: str) -> subprocess.Popen:
+    """Start SGLang server for the specified model."""
+    try:
+        cmd = [
+            "python", "-m", "sglang.launch_server",
+            "--model", model_name,
+            "--port", str(SGLANG_CONFIG["port"]),
+            "--host", SGLANG_CONFIG["host"]
+        ]
+
+        print(f"Starting SGLang server with command: {' '.join(cmd)}")
+        server_process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True
+        )
+
+        # Wait for server to start
+        time.sleep(5)
+
+        # Check if server process is still running
+        if server_process.poll() is not None:
+            stdout, stderr = server_process.communicate()
+            print(f"Server failed to start: {stderr}")
+            return None
+
+        print("Server started successfully")
+        return server_process
+
+    except Exception as e:
+        print(f"Error starting server: {e}")
+        return None
+
 async def process_questions(dataset: List[Dict[str, str]],
                           model_name: str,
                           num_samples: int = 8,
@@ -303,313 +360,6 @@ async def process_questions(dataset: List[Dict[str, str]],
     # Return the results along with wait success count and any Gemini stats
     gemini_stats = checker.stats if hasattr(checker, 'stats') else None
     return results, wait_successes, gemini_stats
-
-# Implement format_arc_question function
-def format_arc_question(question: str, output: Optional[str] = None) -> str:
-    """Format an ARC question with optional output grid."""
-    formatted_question = f"Question: {question}\n\n"
-
-    if output:
-        formatted_question += f"Please solve this question and provide the output as a grid format similar to:\n{output}"
-    else:
-        formatted_question += "Please solve this question and provide your answer as a grid."
-
-    return formatted_question
-
-# Implement load_arc_dataset function
-def load_arc_dataset(file_path: str, subset_ids: Optional[List[str]] = None) -> Tuple[List[Dict], int]:
-    """Load ARC dataset from file with optional subset filtering."""
-    try:
-        with open(file_path, 'r') as f:
-            dataset = json.load(f)
-
-        # Filter by subset_ids if provided
-        if subset_ids:
-            dataset = [item for item in dataset if str(item.get("task_id", "")) in subset_ids]
-
-        return dataset, len(dataset)
-    except Exception as e:
-        print(f"Error loading ARC dataset: {e}")
-        return [], 0
-
-# Implement start_server function
-def start_server(model_name: str) -> subprocess.Popen:
-    """Start SGLang server for the specified model."""
-    try:
-        cmd = [
-            "python", "-m", "sglang.launch_server",
-            "--model", model_name,
-            "--port", str(SGLANG_CONFIG["port"]),
-            "--host", SGLANG_CONFIG["host"]
-        ]
-
-        print(f"Starting SGLang server with command: {' '.join(cmd)}")
-        server_process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        # Wait for server to start
-        time.sleep(5)
-
-        # Check if server process is still running
-        if server_process.poll() is not None:
-            stdout, stderr = server_process.communicate()
-            print(f"Server failed to start: {stderr}")
-            return None
-
-        print("Server started successfully")
-        return server_process
-
-    except Exception as e:
-        print(f"Error starting server: {e}")
-        return None
-
-def load_arc_dataset(file_path: str) -> List[Dict[str, str]]:
-    pass
-
-async def process_questions(dataset: List[Dict[str, str]],
-                            model_name: str,
-                            num_samples: int = 8,
-                            wait: bool = False,
-                            think_tags: bool = False,
-                            suppress_logs: bool = False) -> List[Dict[str, Any]]:
-    async def process_single_question(dataset: List[Dict], model_name: str, results_dir: str, num_samples:int,
-                                      is_arc:bool = False, wait_enabled: bool = False, suppress_logs: bool = False,
-                                        no_think_tags: bool = False) -> Tuple[List[Dict], int, Optional[Dict]]:
-        """Process all questions concurrently with rate limiting"""
-        # Initialize rate limiters for sglang and gemini using semaphores
-        sglang_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SGLANG)
-        gemini_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GEMINI)
-
-        # initialize answer checker with Gemini semaphore - and check whether or not to check for thinking tags
-        checker = AnswerChecker(semaphore=gemini_semaphore, no_think_tags = no_think_tags) if not is_arc else None
-        # Track succesful wait retries
-        wait_successes = 0
-        async with aiohttp.ClientSession() as session:
-        for example in tqdm(dataset, desc="Processing questions"):
-            is_arc = "input" in example and "output" in example
-
-            if is_arc:
-                # Format ARC question with training examples
-                question = format_arc_question(example["input"], example.get("output"))
-                model_answers = await get_model_answer(
-                    session, question, model_name, sglang_semaphore,
-                    num_samples, is_arc=True, wait_enabled=wait
-                )
-
-                # Process each sample
-                samples = []
-                for answer in model_answers:
-                    check_result = check_arc_answer(
-                        question=example,
-                        model_answer=answer,
-                        ground_truth=example["output"],
-                        no_think_tags=not think_tags
-                    )
-
-                    # If wait is enabled and answer is incorrect, but has valid think tags, try again
-                    if wait and not check_result["is_correct"] and has_single_think_tag_pair(answer):
-                        wait_successes += 1
-                        partial_response = extract_partial_response(answer, suppress_logs=suppress_logs)
-                        retry_answers = await get_model_answer(
-                            session, question, model_name, sglang_semaphore,
-                            num_samples=1, is_arc=True, wait_enabled=True,
-                            partial_response=partial_response
-                        )
-
-                        if retry_answers and retry_answers[0]:
-                            combined_answer = partial_response + retry_answers[0]
-                            retry_check = check_arc_answer(
-                                question=example,
-                                model_answer=combined_answer,
-                                ground_truth=example["output"],
-                                no_think_tags=not think_tags
-                            )
-
-                            if retry_check["is_correct"]:
-                                check_result = retry_check
-                                answer = combined_answer
-
-                    sample = {
-                        "output": answer,
-                        "is_correct": check_result["is_correct"]
-                    }
-
-                    # Only include extracted answer if grid was successfully extracted
-                    if check_result["extracted_answer"]:
-                        sample["extracted_answer"] = check_result["extracted_answer"]
-
-                    samples.append(sample)
-
-                result = {
-                    "task_id": example.get("task_id", "unknown"),
-                    "prompt": question,
-                    "input": example["input"],
-                    "ground_truth": example["output"],
-                    "samples": samples
-                }
-
-            else:
-                # Process GSM8K question
-                model_answers = await get_model_answer(
-                    session, example["question"], model_name, sglang_semaphore,
-                    num_samples, wait_enabled=wait
-                )
-
-                # Process each sample
-                samples = []
-                for answer in model_answers:
-                    check_result = await checker.check_answer_async(
-                        question=example["question"],
-                        model_answer=answer,
-                        ground_truth=example["answer"]
-                    )
-
-                    # If wait is enabled and answer is incorrect but has valid think tags, try again
-                    if wait and not check_result["is_correct"] and has_single_think_tag_pair(answer):
-                        partial_response = extract_partial_response(answer, suppress_logs)
-                        retry_answers = await get_model_answer(
-                            session, example["question"], model_name, sglang_semaphore,
-                            num_samples=1, wait_enabled=True, partial_response=partial_response
-                        )
-
-                        if retry_answers and retry_answers[0]:
-                            # Combine partial response with new completion
-                            combined_answer = partial_response + retry_answers[0]
-                            # Check combined answer
-                            retry_result = await checker.check_answer_async(
-                                question=example["question"],
-                                model_answer=combined_answer,
-                                ground_truth=example["answer"]
-                            )
-
-                            if retry_result["is_correct"]:
-                                wait_successes += 1
-                                check_result = retry_result
-                                answer = combined_answer
-
-                    samples.append({
-                        "output": answer,
-                        "is_correct": check_result["is_correct"]
-                    })
-
-                result = {
-                    "question": example["question"],
-                    "answer": example["answer"],
-                    "samples": samples
-                }
-
-            # Calculate metrics for given question
-            result["metrics"] = calculate_metrics(result["samples"])
-
-            # Only print metrics if not suppressing logs
-            if not suppress_logs:  # Fixed variable name from supress_logs to suppress_logs
-                print(f"\nQuestion {len(results)} metrics:")  # Fixed syntax error in f-string
-                for metric, value in result["metrics"].items():
-                    if isinstance(value, float):
-                        print(f"  {metric}: {value:.2f}")
-                    else:
-                        print(f"  {metric}: {value}")
-
-            results.append(result)
-
-    # Return results, wait success count, and checker stats
-    return results, wait_successes, checker.stats if hasattr(checker, "stats") else None
-
-# Fix the check_arc_answer function to handle the missing code
-def check_arc_answer(question: Dict, model_answer: str, ground_truth: str, no_think_tags: bool = False) -> Dict:
-    """Check if an ARC answer is correct."""
-    result = {
-        "is_correct": False,
-        "extracted_answer": None,
-    }
-
-    # Extract answer grid if possible
-    try:
-        # This is a simplified placeholder - actual implementation would be more complex
-        # and would compare the extracted grid with the ground truth
-        if "<think>" in model_answer and "</think>" in model_answer:
-            # Extract content between think tags
-            match = re.search(r'<think>(.*?)</think>', model_answer, re.DOTALL)
-            if match:
-                extracted = match.group(1).strip()
-                # Simple check if the extracted answer contains the ground truth
-                result["is_correct"] = ground_truth in extracted
-                result["extracted_answer"] = extracted
-        elif no_think_tags:
-            # If think tags aren't required, check if answer contains ground truth
-            result["is_correct"] = ground_truth in model_answer
-            result["extracted_answer"] = model_answer
-    except Exception as e:
-        print(f"Error checking ARC answer: {str(e)}")
-
-    return result
-
-# Implement missing format_arc_question function
-def format_arc_question(question: str, output: Optional[str] = None) -> str:
-    """Format an ARC question with optional output grid."""
-    formatted_question = f"Question: {question}\n\n"
-
-    if output:
-        formatted_question += f"Please solve this question and provide the output as a grid format similar to:\n{output}"
-    else:
-        formatted_question += "Please solve this question and provide your answer as a grid."
-
-    return formatted_question
-
-# Implement missing load_arc_dataset function
-def load_arc_dataset(file_path: str, subset_ids: Optional[List[str]] = None) -> Tuple[List[Dict], int]:
-    """Load ARC dataset from file with optional subset filtering."""
-    try:
-        with open(file_path, 'r') as f:
-            dataset = json.load(f)
-
-        # Filter by subset_ids if provided
-        if subset_ids:
-            dataset = [item for item in dataset if str(item.get("task_id", "")) in subset_ids]
-
-        return dataset, len(dataset)
-    except Exception as e:
-        print(f"Error loading ARC dataset: {e}")
-        return [], 0
-
-# Implement missing start_server function
-def start_server(model_name: str) -> subprocess.Popen:
-    """Start SGLang server for the specified model."""
-    try:
-        cmd = [
-            "python", "-m", "sglang.launch_server",
-            "--model", model_name,
-            "--port", str(SGLANG_CONFIG["port"]),
-            "--host", SGLANG_CONFIG["host"]
-        ]
-
-        print(f"Starting SGLang server with command: {' '.join(cmd)}")
-        server_process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-
-        # Wait for server to start
-        time.sleep(5)
-
-        # Check if server process is still running
-        if server_process.poll() is not None:
-            stdout, stderr = server_process.communicate()
-            print(f"Server failed to start: {stderr}")
-            return None
-
-        print("Server started successfully")
-        return server_process
-
-    except Exception as e:
-        print(f"Error starting server: {e}")
-        return None
 
 # Fix the typo in main function
 async def main():
