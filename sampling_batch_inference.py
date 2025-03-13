@@ -214,12 +214,13 @@ def start_server(model_name: str) -> subprocess.Popen:
         print(f"Error starting server: {e}")
         return None
 
+# Fix the process_questions function by removing the nested function and fixing indentation
 async def process_questions(dataset: List[Dict[str, str]],
-                          model_name: str,
-                          num_samples: int = 8,
-                          wait: bool = False,
-                          think_tags: bool = False,
-                          suppress_logs: bool = False) -> List[Dict[str, Any]]:
+                            model_name: str,
+                            num_samples: int = 8,
+                            wait: bool = False,
+                            think_tags: bool = False,
+                            suppress_logs: bool = False) -> Tuple[List[Dict[str, Any]], int, Optional[Dict]]:
     """Process all questions asynchronously and return results."""
     # Initialize rate limiters using semaphores
     sglang_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SGLANG)
@@ -267,16 +268,20 @@ async def process_questions(dataset: List[Dict[str, str]],
 
                         if retry_answers and retry_answers[0]:
                             combined_answer = partial_response + retry_answers[0]
-                            check_result = check_arc_answer(
+                            retry_check = check_arc_answer(
                                 question=example,
                                 model_answer=combined_answer,
                                 ground_truth=example["output"],
                                 no_think_tags=not think_tags
                             )
 
+                            if retry_check["is_correct"]:
+                                check_result = retry_check
+                                answer = combined_answer
+
                     sample = {
                         "output": answer,
-                        "is_correct": check_result["is_correct"],
+                        "is_correct": check_result["is_correct"]
                     }
 
                     # Only include extracted answer if grid was successfully extracted
@@ -290,7 +295,7 @@ async def process_questions(dataset: List[Dict[str, str]],
                     "prompt": question,
                     "input": example["input"],
                     "ground_truth": example["output"],
-                    "samples": samples,
+                    "samples": samples
                 }
 
             else:
@@ -358,10 +363,28 @@ async def process_questions(dataset: List[Dict[str, str]],
             results.append(result)
 
     # Return the results along with wait success count and any Gemini stats
-    gemini_stats = checker.stats if hasattr(checker, 'stats') else None
+    gemini_stats = checker.stats if hasattr(checker, "stats") else None
     return results, wait_successes, gemini_stats
 
-# Fix the typo in main function
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Run batch inference on datasets.")
+    parser.add_argument("--model", type=str, required=True, help="Model name to use")
+    parser.add_argument("--dataset", type=str, default="gsm8k", choices=["gsm8k", "arc"],
+                        help="Dataset to use (gsm8k or arc)")
+    parser.add_argument("--gsm8k-file", type=str, default="data/gsm8k.json",
+                        help="Path to GSM8K dataset file")
+    parser.add_argument("--arc-file", type=str, help="Path to ARC dataset file")
+    parser.add_argument("--subset-file", type=str, help="Path to subset IDs file")
+    parser.add_argument("--num-samples", type=int, default=8,
+                        help="Number of samples per question")
+    parser.add_argument("--wait", action="store_true", help="Enable wait functionality")
+    parser.add_argument("--think-tags", action="store_true", default=True, 
+                        help="Require think tags in answers")
+    parser.add_argument("--suppress-logs", action="store_true", 
+                        help="Suppress detailed logging")
+    return parser.parse_args()
+
 async def main():
     args = parse_args()
     model_name = args.model
@@ -407,7 +430,7 @@ async def main():
             sys.exit(1)
 
         try:
-            dataset, _  = load_arc_dataset(args.arc_file, subset_ids)  # Fixed: removed dot between arc_file and subset_ids
+            dataset, _  = load_arc_dataset(args.arc_file, subset_ids)
         except FileNotFoundError:
             print(f"Could not find ARC dataset file: {args.arc_file}")
             sys.exit(1)
@@ -443,7 +466,7 @@ async def main():
             all_incorrect_lengths.extend(len(s["output"]) for s in incorrect_samples)
 
         avg_correct_length = sum(all_correct_lengths) / len(all_correct_lengths) if all_correct_lengths else 0
-        avg_incorrect_length = sum(all_incorrect_lengths) / len(all_incorrect_lengths) if all_incorrect_lengths else 0  # Fixed variable name
+        avg_incorrect_length = sum(all_incorrect_lengths) / len(all_incorrect_lengths) if all_incorrect_lengths else 0
 
         # Prepare final results
         final_results = {
@@ -452,7 +475,7 @@ async def main():
             "subset_info": f"Using subset of {len(subset_ids)} problems" if subset_ids else None,
             "samples_per_question": args.num_samples,
             "wait_enabled": args.wait,
-            "wait_successes": wait_successes if args.wait else None,  # Fixed typo in variable name
+            "wait_successes": wait_successes if args.wait else None,
             "total_questions": total_count,
             "pass_at_k": {
                 "count": pass_at_k_count,
