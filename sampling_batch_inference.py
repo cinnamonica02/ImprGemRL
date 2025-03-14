@@ -79,10 +79,11 @@ def calculate_metrics(samples: List[Dict]) -> Dict:
 async def get_model_answer(session: aiohttp.ClientSession, question: str, model_name: str,
                           sglang_semaphore: asyncio.Semaphore, num_samples: int,
                           is_arc: bool = False, wait_enabled: bool = False,
-                          partial_response: Optional[str] = None) -> List[str]:
-    """Get multiple model answers for a question asynchronously"""
+                          partial_response: Optional[str] = None,
+                          server_process_ref: List[subprocess.Popen] = None) -> List[str]:
+    """Get multiple model answers for a question asynchronously with server recovery"""
     url = f"http://{SGLANG_CONFIG['host']}:{SGLANG_CONFIG['port']}/v1/chat/completions"
-
+    
     system_prompt = ARC_SYSTEM_PROMPT if is_arc else GSM8K_SYSTEM_PROMPT
 
     messages = [
@@ -100,30 +101,75 @@ async def get_model_answer(session: aiohttp.ClientSession, question: str, model_
         'temperature': 1.0,
         'top_p': 100,
         'top_k': 50,
-        'max_tokens': 8192,  # if we keep doing many trainings we might get over this and need to increase it
-        'n': num_samples if not partial_response else 1  # only generate 1 sample for retry
+        'max_tokens': 8192,
+        'n': num_samples if not partial_response else 1
     }
 
-    try:
-        async with sglang_semaphore:
-            async with session.post(url, json=data) as response:
-                if response.status != 200:
-                    error_text = await response.text()
-                    print(f"Server error (status {response.status}): {error_text}")
-                    return [""] * (num_samples if not partial_response else 1)
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        try:
+            async with sglang_semaphore:
+                async with session.post(url, json=data, timeout=120) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        print(f"Server error (status {response.status}): {error_text}")
+                        
+                        # If this is a server error and we have a server process reference, try to restart
+                        if 500 <= response.status < 600 and server_process_ref and server_process_ref[0]:
+                            if attempt < max_attempts - 1:
+                                print(f"Server error detected, attempting to restart (attempt {attempt+1})")
+                                # Kill old process
+                                server_process_ref[0].terminate()
+                                try:
+                                    server_process_ref[0].wait(timeout=5)
+                                except subprocess.TimeoutExpired:
+                                    server_process_ref[0].kill()
+                                
+                                # Start new process
+                                new_process = start_server(model_name)
+                                if new_process:
+                                    server_process_ref[0] = new_process
+                                    time.sleep(5)  # Wait for server to be ready
+                                    continue  # Try again
+                        
+                        return [""] * (num_samples if not partial_response else 1)
 
-                result = await response.json()
+                    result = await response.json()
 
-                if "choices" not in result or not result["choices"]:
-                    print("No choices in response", result)
-                    return [""] * (num_samples if not partial_response else 1)
+                    if "choices" not in result or not result["choices"]:
+                        print("No choices in response", result)
+                        return [""] * (num_samples if not partial_response else 1)
 
-                # Extract and return the actual model outputs
-                return [choice["message"]["content"] for choice in result["choices"]]
+                    # Extract and return the actual model outputs
+                    return [choice["message"]["content"] for choice in result["choices"]]
 
-    except Exception as e:
-        print(f"Error getting model answer: {str(e)}")
-        return [""] * (num_samples if not partial_response else 1)
+        except Exception as e:
+            print(f"Error getting model answer (attempt {attempt+1}): {str(e)}")
+            
+            # If server connection failed and we have a server process reference, try to restart
+            if "Cannot connect to host" in str(e) and server_process_ref and server_process_ref[0]:
+                if attempt < max_attempts - 1:
+                    print(f"Connection failed, attempting to restart server (attempt {attempt+1})")
+                    # Kill old process if it's still running
+                    if server_process_ref[0].poll() is None:
+                        server_process_ref[0].terminate()
+                        try:
+                            server_process_ref[0].wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            server_process_ref[0].kill()
+                    
+                    # Start new process
+                    new_process = start_server(model_name)
+                    if new_process:
+                        server_process_ref[0] = new_process
+                        time.sleep(5)  # Wait for server to be ready
+                        continue  # Try again
+            
+            if attempt == max_attempts - 1:
+                return [""] * (num_samples if not partial_response else 1)
+            
+            # Wait before retrying
+            await asyncio.sleep(2)
 
 def check_arc_answer(question: Dict, model_answer: str, ground_truth: str, no_think_tags: bool = False) -> Dict:
     """Check if an ARC answer is correct."""
@@ -180,39 +226,101 @@ def load_arc_dataset(file_path: str, subset_ids: Optional[List[str]] = None) -> 
         print(f"Error loading ARC dataset: {e}")
         return [], 0
 
-def start_server(model_name: str) -> subprocess.Popen:
-    """Start SGLang server for the specified model."""
-    try:
-        cmd = [
-            "python", "-m", "sglang.launch_server",
-            "--model", model_name,
-            "--port", str(SGLANG_CONFIG["port"]),
-            "--host", SGLANG_CONFIG["host"]
-        ]
+def start_server(model_name: str, max_retries: int = 3) -> subprocess.Popen:
+    """Start SGLang server for the specified model with retries and verbose logging."""
+    for attempt in range(max_retries):
+        try:
+            cmd = [
+                "python", "-m", "sglang.launch_server",
+                "--model-path", model_name,  # Changed from --model to --model-path
+                "--port", str(SGLANG_CONFIG["port"]),
+                "--host", SGLANG_CONFIG["host"]
+            ]
 
-        print(f"Starting SGLang server with command: {' '.join(cmd)}")
-        server_process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
+            print(f"Starting SGLang server (attempt {attempt+1}/{max_retries}) with command: {' '.join(cmd)}")
+            # Capture output but also send to console for debugging
+            server_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1  # Line buffered
+            )
+            
+            # Create threads to monitor output in real-time
+            def print_output(stream, prefix):
+                for line in iter(stream.readline, ''):
+                    print(f"{prefix}: {line.strip()}")
+                    
+            import threading
+            stdout_thread = threading.Thread(target=print_output, args=(server_process.stdout, "SERVER OUT"))
+            stderr_thread = threading.Thread(target=print_output, args=(server_process.stderr, "SERVER ERR"))
+            stdout_thread.daemon = True
+            stderr_thread.daemon = True
+            stdout_thread.start()
+            stderr_thread.start()
 
-        # Wait for server to start
-        time.sleep(5)
+            # Wait for server to start - increased wait time for larger models
+            start_wait = 30  # Increased from 10 to 30 seconds
+            print(f"Waiting {start_wait} seconds for server to initialize...")
+            time.sleep(start_wait)
 
-        # Check if server process is still running
-        if server_process.poll() is not None:
-            stdout, stderr = server_process.communicate()
-            print(f"Server failed to start: {stderr}")
-            return None
+            # Check if server process is still running
+            if server_process.poll() is not None:
+                print(f"Server process exited with code: {server_process.returncode}")
+                if attempt < max_retries - 1:
+                    print("Retrying...")
+                    continue
+                return None
 
-        print("Server started successfully")
-        return server_process
+            # Test connection to server before returning
+            try:
+                import requests
+                health_url = f"http://{SGLANG_CONFIG['host']}:{SGLANG_CONFIG['port']}/v1/models"
+                print(f"Testing server with request to: {health_url}")
+                response = requests.get(health_url, timeout=10)
+                if response.status_code == 200:
+                    print("Server started successfully and responding to requests")
+                    print(f"Server response: {response.text}")
+                    return server_process
+                else:
+                    print(f"Server started but health check failed with status {response.status_code}: {response.text}")
+                    if attempt < max_retries - 1:
+                        print("Killing server and retrying...")
+                        server_process.terminate()
+                        time.sleep(5)  # Increased cool-down time
+                        continue
+            except requests.exceptions.RequestException as e:
+                print(f"Server health check failed: {e}")
+                print("Checking if server is still running...")
+                if server_process.poll() is None:
+                    print("Server process is still running despite connection failure")
+                else:
+                    print(f"Server process has exited with code: {server_process.returncode}")
+                
+                if attempt < max_retries - 1:
+                    print("Killing server and retrying...")
+                    try:
+                        server_process.terminate()
+                        server_process.wait(timeout=5)
+                    except Exception as kill_error:
+                        print(f"Error killing server: {kill_error}")
+                    time.sleep(5)  # Increased cool-down time
+                    continue
+            
+            # If we got here but couldn't confirm health, return process anyway
+            print("Returning server process without confirming health")
+            return server_process
+            
+        except Exception as e:
+            print(f"Error starting server: {e}")
+            if attempt < max_retries - 1:
+                print("Retrying...")
+                time.sleep(5)  # Increased cool-down time
+            else:
+                return None
 
-    except Exception as e:
-        print(f"Error starting server: {e}")
-        return None
+    return None
 
 # Fix the process_questions function by removing the nested function and fixing indentation
 async def process_questions(dataset: List[Dict[str, str]],
@@ -220,7 +328,8 @@ async def process_questions(dataset: List[Dict[str, str]],
                             num_samples: int = 8,
                             wait: bool = False,
                             think_tags: bool = False,
-                            suppress_logs: bool = False) -> Tuple[List[Dict[str, Any]], int, Optional[Dict]]:
+                            suppress_logs: bool = False,
+                            server_process_ref: List[subprocess.Popen] = None) -> Tuple[List[Dict[str, Any]], int, Optional[Dict]]:
     """Process all questions asynchronously and return results."""
     # Initialize rate limiters using semaphores
     sglang_semaphore = asyncio.Semaphore(MAX_CONCURRENT_SGLANG)
@@ -243,7 +352,8 @@ async def process_questions(dataset: List[Dict[str, str]],
                 question = format_arc_question(example["input"], example.get("output"))
                 model_answers = await get_model_answer(
                     session, question, model_name, sglang_semaphore,
-                    num_samples, is_arc=True, wait_enabled=wait
+                    num_samples, is_arc=True, wait_enabled=wait,
+                    server_process_ref=server_process_ref
                 )
 
                 # Process each sample
@@ -263,7 +373,8 @@ async def process_questions(dataset: List[Dict[str, str]],
                         retry_answers = await get_model_answer(
                             session, question, model_name, sglang_semaphore,
                             num_samples=1, is_arc=True, wait_enabled=True,
-                            partial_response=partial_response
+                            partial_response=partial_response,
+                            server_process_ref=server_process_ref
                         )
 
                         if retry_answers and retry_answers[0]:
@@ -302,7 +413,8 @@ async def process_questions(dataset: List[Dict[str, str]],
                 # Process GSM8K question
                 model_answers = await get_model_answer(
                     session, example["question"], model_name, sglang_semaphore,
-                    num_samples, wait_enabled=wait
+                    num_samples, wait_enabled=wait,
+                    server_process_ref=server_process_ref
                 )
 
                 # Process each sample
@@ -319,7 +431,8 @@ async def process_questions(dataset: List[Dict[str, str]],
                         partial_response = extract_partial_response(answer, suppress_logs=suppress_logs)
                         retry_answers = await get_model_answer(
                             session, example["question"], model_name, sglang_semaphore,
-                            num_samples=1, wait_enabled=True, partial_response=partial_response
+                            num_samples=1, wait_enabled=True, partial_response=partial_response,
+                            server_process_ref=server_process_ref
                         )
 
                         if retry_answers and retry_answers[0]:
@@ -439,6 +552,9 @@ async def main():
     server_process = start_server(model_name)
     if not server_process:
         sys.exit(1)
+    
+    # Create a mutable reference to the server process
+    server_process_ref = [server_process]
 
     try:
         # Process all questions
@@ -448,7 +564,8 @@ async def main():
             num_samples=args.num_samples,
             wait=args.wait,
             think_tags=args.think_tags,
-            suppress_logs=args.suppress_logs
+            suppress_logs=args.suppress_logs,
+            server_process_ref=server_process_ref  # Pass server process reference
         )
 
         # calculate stats
@@ -517,13 +634,13 @@ async def main():
 
     finally:
         # Make sure to terminate the server process when done
-        if server_process:
+        if server_process_ref and server_process_ref[0]:
             print("Shutting down server...")
-            server_process.terminate()
+            server_process_ref[0].terminate()
             try:
-                server_process.wait(timeout=5)
+                server_process_ref[0].wait(timeout=5)
             except subprocess.TimeoutExpired:
-                server_process.kill()
+                server_process_ref[0].kill()
 
 if __name__ == "__main__":
     asyncio.run(main())
